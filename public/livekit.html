@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>云湖语音房间</title>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+  <script src="https://unpkg.com/livekit-client/dist/livekit-client.umd.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 20px;
+      font-size: 28px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .input-group {
+      margin-bottom: 15px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: #666;
+      font-size: 14px;
+    }
+
+    input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #d9d9d9;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    button {
+      background: #1890ff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+    }
+
+    button:hover {
+      background: #40a9ff;
+    }
+
+    button:disabled {
+      background: #d9d9d9;
+      cursor: not-allowed;
+    }
+
+    button.danger {
+      background: #ff4d4f;
+    }
+
+    button.danger:hover {
+      background: #ff7875;
+    }
+
+    .error {
+      background: #fff2f0;
+      border: 1px solid #ffccc7;
+      color: #cf1322;
+      padding: 15px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+
+    .success {
+      background: #f6ffed;
+      border: 1px solid #b7eb8f;
+      color: #52c41a;
+      padding: 15px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+
+    .room-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 15px;
+    }
+
+    .room-item {
+      background: white;
+      border: 1px solid #f0f0f0;
+      border-radius: 8px;
+      padding: 15px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .room-item:hover {
+      border-color: #1890ff;
+      box-shadow: 0 2px 8px rgba(24,144,255,0.2);
+    }
+
+    .room-title {
+      font-size: 16px;
+      font-weight: 500;
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    .room-info {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 5px;
+    }
+
+    .participants {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .participant {
+      background: #f5f5f5;
+      padding: 10px 15px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .participant.speaking {
+      background: #e6f7ff;
+      border: 1px solid #91d5ff;
+    }
+
+    .audio-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #52c41a;
+    }
+
+    .audio-indicator.muted {
+      background: #ff4d4f;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="container">
+      <h1>云湖语音房间</h1>
+
+      <div v-if="error" class="error">{{ error }}</div>
+      <div v-if="success" class="success">{{ success }}</div>
+
+      <div class="card" v-if="!currentRoom">
+        <h2>获取语音房间</h2>
+        <div class="input-group">
+          <label>群聊ID</label>
+          <input v-model="groupId" placeholder="输入群聊ID" />
+        </div>
+        <button @click="getRooms" :disabled="loading">
+          {{ loading ? '加载中...' : '获取房间列表' }}
+        </button>
+      </div>
+
+      <div class="card" v-if="rooms.length > 0 && !currentRoom">
+        <h2>可用房间</h2>
+        <div class="room-list">
+          <div 
+            v-for="room in rooms" 
+            :key="room.roomId" 
+            class="room-item"
+            @click="joinRoom(room)"
+          >
+            <div class="room-title">{{ room.title }}</div>
+            <div class="room-info">创建者: {{ room.nickname }}</div>
+            <div class="room-info">参与人数: {{ room.count }}</div>
+            <div class="room-info">房间ID: {{ room.roomId }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" v-if="currentRoom">
+        <h2>当前房间: {{ currentRoom.title }}</h2>
+        <div class="room-info">房间ID: {{ currentRoom.roomId }}</div>
+        <div class="room-info">连接状态: {{ connectionState }}</div>
+
+        <div class="controls">
+          <button @click="toggleMute">
+            {{ isMuted ? '取消静音' : '静音' }}
+          </button>
+          <button class="danger" @click="leaveRoom">
+            离开房间
+          </button>
+        </div>
+
+        <div class="participants" v-if="participants.length > 0">
+          <h3>参与者 ({{ participants.length }})</h3>
+          <div 
+            v-for="participant in participants" 
+            :key="participant.identity"
+            class="participant"
+            :class="{ speaking: participant.isSpeaking }"
+          >
+            <div 
+              class="audio-indicator" 
+              :class="{ muted: participant.isMuted }"
+            ></div>
+            <span>{{ participant.name }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp } = Vue;
+    const { Room, RoomEvent, Track } = LivekitClient;
+
+    createApp({
+      data() {
+        return {
+          groupId: '979377289',
+          loading: false,
+          error: null,
+          success: null,
+          rooms: [],
+          currentRoom: null,
+          livekitRoom: null,
+          connectionState: '未连接',
+          isMuted: false,
+          participants: []
+        }
+      },
+      methods: {
+        async getRooms() {
+          this.loading = true;
+          this.error = null;
+          
+          try {
+            const response = await fetch('/api/live/rooms', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ groupId: this.groupId })
+            });
+            
+            const result = await response.json();
+            
+            if (result.code !== 1) {
+              throw new Error(result.msg || '获取房间失败');
+            }
+            
+            this.rooms = result.data.rooms || [];
+            this.success = `找到 ${this.rooms.length} 个房间`;
+          } catch (err) {
+            this.error = '获取房间失败: ' + err.message;
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async joinRoom(room) {
+          this.loading = true;
+          this.error = null;
+          
+          try {
+            // 获取加入token
+            const response = await fetch('/api/live/join', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                roomId: room.roomId,
+                chatId: room.chatId
+              })
+            });
+            
+            const result = await response.json();
+            
+            if (result.code !== 1) {
+              throw new Error(result.msg || '获取加入token失败');
+            }
+            
+            const joinToken = result.data.joinToken;
+            
+            // 连接LiveKit
+            this.livekitRoom = new Room();
+            
+            // 监听事件
+            this.livekitRoom.on(RoomEvent.Connected, () => {
+              this.connectionState = '已连接';
+              this.success = '成功加入房间';
+            });
+            
+            this.livekitRoom.on(RoomEvent.Disconnected, () => {
+              this.connectionState = '已断开';
+              this.currentRoom = null;
+            });
+            
+            this.livekitRoom.on(RoomEvent.ParticipantConnected, (participant) => {
+              this.updateParticipants();
+            });
+            
+            this.livekitRoom.on(RoomEvent.ParticipantDisconnected, (participant) => {
+              this.updateParticipants();
+            });
+            
+            this.livekitRoom.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+              if (track.kind === Track.Kind.Audio) {
+                const audioElement = track.attach();
+                document.body.appendChild(audioElement);
+              }
+            });
+            
+            // 连接到房间
+            await this.livekitRoom.connect('wss://livekit.jwznb.com', joinToken);
+            
+            this.currentRoom = room;
+            this.updateParticipants();
+            
+          } catch (err) {
+            this.error = '加入房间失败: ' + err.message;
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async toggleMute() {
+          if (!this.livekitRoom) return;
+          
+          const localParticipant = this.livekitRoom.localParticipant;
+          const audioTrack = localParticipant.getTrackPublication(Track.Source.Microphone);
+          
+          if (audioTrack) {
+            this.isMuted = !audioTrack.isMuted;
+            await audioTrack.setMuted(this.isMuted);
+          }
+        },
+
+        async leaveRoom() {
+          if (this.livekitRoom) {
+            await this.livekitRoom.disconnect();
+            this.livekitRoom = null;
+          }
+          this.currentRoom = null;
+          this.participants = [];
+          this.connectionState = '未连接';
+        },
+
+        updateParticipants() {
+          if (!this.livekitRoom) return;
+          
+          this.participants = Array.from(this.livekitRoom.remoteParticipants.values()).map(p => ({
+            identity: p.identity,
+            name: p.name || p.identity,
+            isSpeaking: p.isSpeaking,
+            isMuted: p.isMicrophoneEnabled === false
+          }));
+          
+          // 添加本地参与者
+          const local = this.livekitRoom.localParticipant;
+          this.participants.unshift({
+            identity: local.identity,
+            name: (local.name || local.identity) + ' (我)',
+            isSpeaking: local.isSpeaking,
+            isMuted: this.isMuted
+          });
+        }
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

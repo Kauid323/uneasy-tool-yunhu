@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>超级文件传输</title>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 20px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: #666;
+      font-size: 14px;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+
+    button {
+      background: #1890ff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+    }
+
+    button:hover {
+      background: #40a9ff;
+    }
+
+    button:disabled {
+      background: #d9d9d9;
+      cursor: not-allowed;
+    }
+
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+
+    .status.success {
+      background: #f6ffed;
+      border: 1px solid #b7eb8f;
+      color: #52c41a;
+    }
+
+    .status.error {
+      background: #fff2f0;
+      border: 1px solid #ffccc7;
+      color: #cf1322;
+    }
+
+    .status.info {
+      background: #e6f7ff;
+      border: 1px solid #91d5ff;
+      color: #1890ff;
+    }
+
+    .log {
+      background: #f5f5f5;
+      padding: 15px;
+      border-radius: 4px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    .log-item {
+      margin-bottom: 5px;
+      padding: 5px;
+      background: white;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="container">
+      <h1>超级文件传输</h1>
+
+      <!-- 在线设备列表 -->
+      <div class="card">
+        <h2>在线设备列表</h2>
+        <button @click="fetchDevices" :disabled="loadingDevices">
+          {{ loadingDevices ? '加载中...' : '刷新设备列表' }}
+        </button>
+        <div v-if="devices.length > 0" style="margin-top: 15px;">
+          <div v-for="device in devices" :key="device.deviceId" 
+               style="padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 10px;">
+            <div><strong>平台:</strong> {{ device.platform }}</div>
+            <div><strong>设备ID:</strong> {{ device.deviceId }}</div>
+            <div><strong>上线时间:</strong> {{ formatTimestamp(device.loginTimestamp) }}</div>
+            <button @click="selectDevice(device)" style="margin-top: 5px;">
+              选择此设备
+            </button>
+          </div>
+        </div>
+        <div v-else-if="!loadingDevices" style="color: #999; margin-top: 15px;">
+          暂无在线设备
+        </div>
+      </div>
+
+      <!-- 发送文件 -->
+      <div class="card">
+        <h2>发送文件</h2>
+        <div v-if="sendStatus" :class="['status', sendStatus.type]">
+          {{ sendStatus.message }}
+        </div>
+        <div class="form-group">
+          <label>目标用户ID</label>
+          <input v-model="sendForm.userId" placeholder="输入用户ID">
+        </div>
+        <div class="form-group">
+          <label>目标设备ID（可选）</label>
+          <input v-model="sendForm.deviceId" placeholder="留空则发送给所有设备">
+        </div>
+        <div class="form-group">
+          <label>选择要发送的文件（浏览器无法直接读取你填的本地路径，必须用文件选择器）</label>
+          <input type="file" @change="onFileSelected">
+          <div v-if="selectedFile" style="margin-top: 8px; color:#666; font-size: 13px;">
+            已选择：{{ selectedFile.name }}（{{ selectedFile.size }} bytes）
+          </div>
+        </div>
+
+        <button @click="sendFile" :disabled="sending || !selectedFile">
+          {{ sending ? '发送中...' : '发送文件请求(握手)' }}
+        </button>
+
+        <button
+          @click="sendSelectedFile"
+          :disabled="!selectedFile || !dataChannel || dataChannel.readyState !== 'open' || sendingBinary"
+          style="background:#52c41a;"
+        >
+          {{ sendingBinary ? '传输中...' : '通过WebRTC开始传输' }}
+        </button>
+
+        <div v-if="sendingBinary" style="margin-top: 10px; color:#666; font-size: 13px;">
+          发送进度：{{ Math.floor(sendProgress * 100) }}%
+        </div>
+      </div>
+
+      <!-- WebRTC连接 -->
+      <div class="card">
+        <h2>WebRTC连接</h2>
+        <div v-if="rtcStatus" :class="['status', rtcStatus.type]">
+          {{ rtcStatus.message }}
+        </div>
+        
+        <div class="form-group">
+          <label>
+            <input type="checkbox" v-model="autoAccept">
+            自动接受新连接
+          </label>
+        </div>
+        
+        <div v-if="pendingSessions.length > 0" class="status info">
+          待处理连接: {{ pendingSessions.length }} 个
+          <button @click="refreshPending" style="margin-left: 10px;">刷新</button>
+        </div>
+        
+        <h3>主动发起连接</h3>
+        <div class="form-group">
+          <label>目标用户ID</label>
+          <input v-model="initiateForm.userId" placeholder="输入用户ID">
+        </div>
+        <div class="form-group">
+          <label>目标设备ID</label>
+          <input v-model="initiateForm.deviceId" placeholder="输入设备ID">
+        </div>
+        <button @click="initiateConnection" :disabled="initiating">
+          {{ initiating ? '发起中...' : '发起连接' }}
+        </button>
+        
+        <hr style="margin: 20px 0;">
+        
+        <h3>接收连接</h3>
+        <div class="form-group">
+          <label>Session ID（从对方获取）</label>
+          <input v-model="listenSessionId" placeholder="输入session ID">
+        </div>
+        <button @click="startListening" :disabled="listening">
+          {{ listening ? '监听中...' : '开始监听' }}
+        </button>
+        <button @click="stopListening" :disabled="!listening">
+          停止监听
+        </button>
+        
+        <hr style="margin: 20px 0;">
+        
+        <button @click="closeConnection" :disabled="!peerConnection">
+          关闭连接
+        </button>
+      </div>
+
+      <!-- 日志 -->
+      <div class="card">
+        <h2>日志</h2>
+        <div class="log">
+          <div v-for="(log, index) in logs" :key="index" class="log-item">
+            {{ log }}
+          </div>
+        </div>
+        <button @click="clearLogs" style="margin-top: 10px;">清空日志</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp } = Vue;
+
+    createApp({
+      data() {
+        return {
+          sendForm: {
+            userId: '',
+            deviceId: ''
+          },
+          // 真正用于 WebRTC 发送的数据（浏览器必须通过 input[type=file] 选择）
+          selectedFile: null,
+          sendingBinary: false,
+          sendProgress: 0,
+          // 接收端状态
+          receiving: false,
+          receiveFileName: '',
+          receiveFileSize: 0,
+          receiveBytes: 0,
+          receiveBuffers: [],
+          receiveProgress: 0,
+          // 发送端等待 READY
+          waitingReady: false,
+          readyRetryTimer: null,
+          readyRetryCount: 0,
+          forceStartTimer: null,
+          // 本次传输的文件 uuid（要和 START-uuid-filename 里的 uuid 一致，方便对齐 Dart 逻辑）
+          fileUuid: '',
+          // 对齐 Dart 体验：对方接受后，连接一建立就自动开始传输（不需要手动再点一次）
+          autoStartAfterConnected: false,
+          initiateForm: {
+            userId: '',
+            deviceId: ''
+          },
+          listenSessionId: '',
+          sendStatus: null,
+          rtcStatus: null,
+          sending: false,
+          initiating: false,
+          listening: false,
+          autoAccept: true,
+          pendingSessions: [],
+          peerConnection: null,
+          dataChannel: null,
+          eventSource: null,
+          currentSessionId: '',
+          logs: [],
+          devices: [],
+          loadingDevices: false
+        }
+      },
+      mounted() {
+        // 自动获取设备列表
+        this.fetchDevices();
+        
+        if (this.autoAccept) {
+          this.startAutoAccept();
+        }
+      },
+      methods: {
+        log(message) {
+          const timestamp = new Date().toLocaleTimeString();
+          this.logs.unshift(`[${timestamp}] ${message}`);
+          if (this.logs.length > 100) {
+            this.logs.pop();
+          }
+        },
+        clearLogs() {
+          this.logs = [];
+        },
+        async fetchDevices() {
+          this.loadingDevices = true;
+          try {
+            const response = await fetch('/api/user/devices');
+            const data = await response.json();
+            
+            if (data.devices) {
+              this.devices = data.devices;
+              this.log(`获取到${this.devices.length}个在线设备`);
+              
+              // 保存deviceId到localStorage
+              const deviceIds = this.devices.map(d => ({
+                userId: d.userId,
+                deviceId: d.deviceId,
+                platform: d.platform
+              }));
+              localStorage.setItem('onlineDevices', JSON.stringify(deviceIds));
+              this.log('设备列表已保存到本地');
+            } else {
+              this.devices = [];
+              this.log('没有在线设备');
+            }
+          } catch (error) {
+            this.log('获取设备列表失败: ' + error.message);
+          } finally {
+            this.loadingDevices = false;
+          }
+        },
+        selectDevice(device) {
+          this.sendForm.userId = device.userId;
+          this.sendForm.deviceId = device.deviceId;
+          this.initiateForm.userId = device.userId;
+          this.initiateForm.deviceId = device.deviceId;
+          this.log(`已选择设备: ${device.platform} (${device.deviceId})`);
+        },
+        formatTimestamp(timestamp) {
+          if (!timestamp) return '';
+          const date = new Date(timestamp * 1000);
+          return date.toLocaleString('zh-CN');
+        },
+
+        onFileSelected(e) {
+          const file = e?.target?.files?.[0] || null;
+          this.selectedFile = file;
+          if (file) {
+            this.log(`已选择文件: ${file.name} (${file.size} bytes)`);
+          }
+        },
+
+        async sendFile() {
+          this.sending = true;
+          this.sendStatus = null;
+          
+          try {
+            // 发送前先关闭/停止当前可能存在的“接收监听/旧连接”，避免 autoAccept 抢占 peerConnection/dataChannel
+            // （你日志里的 stable 状态错误、READY 永远收不到，基本都是因为同一个页面同时做收发导致状态互相覆盖）
+            try {
+              this.stopListening();
+            } catch (e) {}
+            try {
+              this.closeConnection();
+            } catch (e) {}
+
+            // 发送流程期间禁用自动接受，避免它在后台又创建一个新的 peerConnection 覆盖掉发送用的
+            this.autoAccept = false;
+
+            if (!this.selectedFile) {
+              throw new Error('请先选择要发送的文件');
+            }
+
+            this.fileUuid = this.generateUUID();
+            const fileData = JSON.stringify({
+              // 浏览器无法读取任意本地路径，因此 path 这里只能填一个占位（或文件名）。
+              // 真正的二进制数据由 DataChannel 发送。
+              path: this.selectedFile.name,
+              size: this.selectedFile.size,
+              name: this.selectedFile.name,
+              isDirectory: 0,
+              count: 1,
+              current: 1,
+              uuid: this.fileUuid
+            });
+            
+            this.log('发送文件分享申请...');
+            const response = await fetch('/api/file/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: this.sendForm.userId,
+                deviceId: this.sendForm.deviceId || '',
+                fileData: fileData
+              })
+            });
+            
+            const result = await response.json();
+            
+            if (result.code === 1) {
+              this.sendStatus = { type: 'success', message: '文件分享申请已发送' };
+              this.log('文件分享申请发送成功');
+              
+              // 监听 reply 消息（注意：reply 的 key 是 userId_deviceId；而 offer/candidate 的 key 是 session_id）
+              // 之前代码复用 replySource 来监听 answer/candidate，会导致 candidate(按 session_id 路由) 永远匹配不到回调，表现为：
+              //   [WS] 没有找到回调: key=<session_id>
+              const deviceId = this.sendForm.deviceId || '';
+              const replyId = `${this.sendForm.userId}_${deviceId}`;
+              this.log('等待对方接受，Reply ID: ' + replyId);
+
+              let hasHandledReply = false;
+              const replySource = new EventSource(`/api/file/listen/${replyId}`);
+              replySource.onmessage = async (event) => {
+                const payload = JSON.parse(event.data);
+                const sendType = payload?.data?.sender?.sendType;
+                this.log('收到消息: ' + sendType);
+
+                if (sendType !== 'reply' || hasHandledReply) return;
+                hasHandledReply = true;
+
+                const acceptDeviceId = payload?.data?.sender?.sendDeviceId || '';
+                this.log('对方已接受文件传输！设备ID: ' + acceptDeviceId);
+
+                // replySource 只负责等待 reply
+                replySource.close();
+
+                // 自动发起 WebRTC：这里必须新建基于 session_id 的 SSE 监听（在 initiateConnection() 内部完成）
+                // 并且对齐 Dart 体验：连接建立就自动开传
+                this.autoStartAfterConnected = true;
+                this.initiateForm.userId = this.sendForm.userId;
+                this.initiateForm.deviceId = acceptDeviceId;
+                await this.initiateConnection();
+              };
+
+              replySource.onerror = () => {
+                // 避免无限报错刷屏
+                this.log('Reply SSE 连接错误/断开');
+              };
+            } else {
+              throw new Error(result.msg || '发送失败');
+            }
+          } catch (error) {
+            this.sendStatus = { type: 'error', message: error.message };
+            this.log('错误: ' + error.message);
+          } finally {
+            this.sending = false;
+          }
+        },
+        async initiateConnection() {
+          this.initiating = true;
+          this.rtcStatus = null;
+          
+          try {
+            this.log('发起WebRTC连接...');
+            
+            // 生成session ID
+            this.currentSessionId = this.generateUUID();
+            this.log('Session ID: ' + this.currentSessionId);
+            
+            // 创建RTCPeerConnection
+            this.peerConnection = new RTCPeerConnection({
+              iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+              ]
+            });
+            
+            // 创建数据通道
+            // 对齐 Flutter 端 Signaling(media='data') 常见实现：dataChannel label 使用 'data'
+            this.dataChannel = this.peerConnection.createDataChannel('data', {
+              ordered: true
+            });
+
+            // 重要：允许接收二进制
+            this.dataChannel.binaryType = 'arraybuffer';
+
+            this.dataChannel.onopen = async () => {
+              this.log('数据通道已打开');
+              this.rtcStatus = { type: 'success', message: '连接已建立' };
+
+              // 自动开传：对齐 Dart（对方 accept 后就直接跑进度条）
+              if (this.autoStartAfterConnected) {
+                this.autoStartAfterConnected = false;
+                await this.sendSelectedFile();
+              }
+            };
+
+            this.dataChannel.onclose = () => {
+              this.log('数据通道已关闭');
+            };
+
+            this.dataChannel.onmessage = (event) => {
+              this.handleDataChannelMessage(event);
+            };
+            
+            // 开始监听响应
+            const pendingCandidates = []; // 缓存收到的candidate
+            this.eventSource = new EventSource(`/api/file/listen/${this.currentSessionId}`);
+            this.eventSource.onmessage = async (event) => {
+              const data = JSON.parse(event.data);
+              const sendType = data.data.sender.sendType;
+              this.log('收到消息: ' + sendType);
+              
+              try {
+                const msgData = JSON.parse(data.data.sender.data);
+                
+                if (sendType === 'answer') {
+                  this.log('处理answer');
+                  await this.peerConnection.setRemoteDescription(new RTCSessionDescription(msgData));
+                  
+                  // 处理缓存的candidates
+                  this.log(`处理${pendingCandidates.length}个缓存的candidate`);
+                  for (const candidate of pendingCandidates) {
+                    await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                  }
+                  pendingCandidates.length = 0; // 清空缓存
+                } else if (sendType === 'candidate') {
+                  if (msgData.candidate) {
+                    // 如果还没有remote description，缓存candidate
+                    if (!this.peerConnection.remoteDescription) {
+                      this.log('缓存ICE candidate');
+                      pendingCandidates.push(msgData.candidate);
+                    } else {
+                      this.log('添加ICE candidate');
+                      await this.peerConnection.addIceCandidate(new RTCIceCandidate(msgData.candidate));
+                    }
+                  }
+                }
+              } catch (error) {
+                this.log('处理消息失败: ' + error.message);
+              }
+            };
+            
+            // ICE候选
+            this.peerConnection.onicecandidate = async (event) => {
+              if (event.candidate) {
+                this.log('发送ICE candidate');
+                const candidateData = JSON.stringify({
+                  to: this.initiateForm.userId,
+                  from: this.initiateForm.userId,
+                  did: this.initiateForm.deviceId,
+                  candidate: {
+                    sdpMLineIndex: event.candidate.sdpMLineIndex,
+                    sdpMid: event.candidate.sdpMid,
+                    candidate: event.candidate.candidate
+                  },
+                  session_id: this.currentSessionId
+                });
+                
+                await fetch('/api/file/candidate', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    deviceId: this.initiateForm.deviceId,
+                    data: candidateData,
+                    userId: this.initiateForm.userId
+                  })
+                });
+              }
+            };
+            
+            // 创建offer
+            const offer = await this.peerConnection.createOffer();
+            await this.peerConnection.setLocalDescription(offer);
+            
+            // 发送offer
+            const description = JSON.stringify({
+              sdp: offer.sdp,
+              type: offer.type
+            });
+            
+            this.log('发送offer...');
+            const response = await fetch('/api/file/offer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                deviceId: this.initiateForm.deviceId,
+                description: description,
+                userId: this.initiateForm.userId,
+                sessionId: this.currentSessionId
+              })
+            });
+            
+            const result = await response.json();
+            
+            if (result.code === 1) {
+              this.rtcStatus = { type: 'info', message: '等待对方响应...' };
+              this.log('Offer已发送，等待响应');
+            } else {
+              throw new Error(result.msg || '连接失败');
+            }
+          } catch (error) {
+            this.rtcStatus = { type: 'error', message: error.message };
+            this.log('错误: ' + error.message);
+          } finally {
+            this.initiating = false;
+          }
+        },
+        async createConnectionAndSendOffer(existingEventSource) {
+          // 复用已有的EventSource，不创建新的
+          this.initiating = true;
+          this.rtcStatus = null;
+          
+          try {
+            this.log('发起WebRTC连接...');
+            
+            // 生成session ID
+            this.currentSessionId = this.generateUUID();
+            this.log('Session ID: ' + this.currentSessionId);
+            
+            // 创建RTCPeerConnection
+            this.peerConnection = new RTCPeerConnection({
+              iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+              ]
+            });
+            
+            // 创建数据通道
+            // 对齐 Flutter 端 Signaling(media='data') 常见实现：dataChannel label 使用 'data'
+            this.dataChannel = this.peerConnection.createDataChannel('data', {
+              ordered: true
+            });
+
+            // 重要：允许接收二进制
+            this.dataChannel.binaryType = 'arraybuffer';
+
+            this.dataChannel.onopen = async () => {
+              this.log('数据通道已打开');
+              this.rtcStatus = { type: 'success', message: '连接已建立' };
+
+              if (this.autoStartAfterConnected) {
+                this.autoStartAfterConnected = false;
+                await this.sendSelectedFile();
+              }
+            };
+
+            this.dataChannel.onclose = () => {
+              this.log('数据通道已关闭');
+            };
+
+            this.dataChannel.onmessage = (event) => {
+              this.handleDataChannelMessage(event);
+            };
+            
+            // 复用existingEventSource监听answer和candidate
+            const pendingCandidates = [];
+            const originalOnMessage = existingEventSource.onmessage;
+            existingEventSource.onmessage = async (event) => {
+              const data = JSON.parse(event.data);
+              const sendType = data.data.sender.sendType;
+              this.log('收到消息: ' + sendType);
+              
+              try {
+                const msgData = JSON.parse(data.data.sender.data);
+                
+                if (sendType === 'answer') {
+                  this.log('处理answer');
+                  await this.peerConnection.setRemoteDescription(new RTCSessionDescription(msgData));
+                  
+                  // 处理缓存的candidates
+                  this.log(`处理${pendingCandidates.length}个缓存的candidate`);
+                  for (const candidate of pendingCandidates) {
+                    await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                  }
+                  pendingCandidates.length = 0;
+                } else if (sendType === 'candidate') {
+                  if (msgData.candidate) {
+                    if (!this.peerConnection.remoteDescription) {
+                      this.log('缓存ICE candidate');
+                      pendingCandidates.push(msgData.candidate);
+                    } else {
+                      this.log('添加ICE candidate');
+                      await this.peerConnection.addIceCandidate(new RTCIceCandidate(msgData.candidate));
+                    }
+                  }
+                } else if (sendType === 'reply') {
+                  // 继续处理reply消息
+                  if (originalOnMessage) {
+                    originalOnMessage.call(existingEventSource, event);
+                  }
+                }
+              } catch (error) {
+                this.log('处理消息失败: ' + error.message);
+              }
+            };
+            
+            // ICE候选
+            this.peerConnection.onicecandidate = async (event) => {
+              if (event.candidate) {
+                this.log('发送ICE candidate');
+                const candidateData = JSON.stringify({
+                  to: this.initiateForm.userId,
+                  from: this.initiateForm.userId,
+                  did: this.initiateForm.deviceId,
+                  candidate: {
+                    sdpMLineIndex: event.candidate.sdpMLineIndex,
+                    sdpMid: event.candidate.sdpMid,
+                    candidate: event.candidate.candidate
+                  },
+                  session_id: this.currentSessionId
+                });
+                
+                await fetch('/api/file/candidate', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    deviceId: this.initiateForm.deviceId,
+                    data: candidateData,
+                    userId: this.initiateForm.userId
+                  })
+                });
+              }
+            };
+            
+            // 创建offer
+            const offer = await this.peerConnection.createOffer();
+            await this.peerConnection.setLocalDescription(offer);
+            
+            // 发送offer
+            const description = JSON.stringify({
+              sdp: offer.sdp,
+              type: offer.type
+            });
+            
+            this.log('发送offer...');
+            const response = await fetch('/api/file/offer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                deviceId: this.initiateForm.deviceId,
+                description: description,
+                userId: this.initiateForm.userId,
+                sessionId: this.currentSessionId
+              })
+            });
+            
+            const result = await response.json();
+            
+            if (result.code === 1) {
+              this.rtcStatus = { type: 'info', message: '等待对方响应...' };
+              this.log('Offer已发送，等待响应');
+            } else {
+              throw new Error(result.msg || '连接失败');
+            }
+          } catch (error) {
+            this.rtcStatus = { type: 'error', message: error.message };
+            this.log('错误: ' + error.message);
+          } finally {
+            this.initiating = false;
+          }
+        },
+        startListening() {
+          if (!this.listenSessionId) {
+            this.rtcStatus = { type: 'error', message: '请输入Session ID' };
+            return;
+          }
+
+          // 进入接收模式时，避免同时发起连接
+          this.autoStartAfterConnected = false;
+
+          this.listening = true;
+          this.rtcStatus = { type: 'info', message: '开始监听...' };
+          this.log('开始监听 Session: ' + this.listenSessionId);
+
+          // 创建 RTCPeerConnection
+          this.peerConnection = new RTCPeerConnection({
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:global.stun.twilio.com:3478' }
+            ]
+          });
+
+          // 记录对端信息（用于发送 answer/candidate 到正确的 userId/deviceId）
+          const remote = {
+            userId: '',
+            deviceId: ''
+          };
+
+          // 本端 candidate -> 通过 HTTP API 发给对端
+          this.peerConnection.onicecandidate = async (event) => {
+            if (!event.candidate) return;
+            if (!remote.userId || !remote.deviceId) {
+              this.log('本端 ICE candidate 产生，但 remote 信息未就绪，跳过发送');
+              return;
+            }
+
+            const candidateData = JSON.stringify({
+              candidate: {
+                sdpMLineIndex: event.candidate.sdpMLineIndex,
+                sdpMid: event.candidate.sdpMid,
+                candidate: event.candidate.candidate
+              },
+              session_id: this.listenSessionId
+            });
+
+            try {
+              await fetch('/api/file/candidate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  deviceId: remote.deviceId,
+                  data: candidateData,
+                  userId: remote.userId
+                })
+              });
+              this.log('已发送本端 ICE candidate');
+            } catch (e) {
+              this.log('发送本端 ICE candidate 失败: ' + e.message);
+            }
+          };
+
+          // 监听数据通道
+          this.peerConnection.ondatachannel = (event) => {
+            this.dataChannel = event.channel;
+            this.log('收到数据通道');
+
+            // 重要：允许接收二进制
+            this.dataChannel.binaryType = 'arraybuffer';
+
+            this.dataChannel.onopen = () => {
+              this.log('数据通道已打开');
+              this.rtcStatus = { type: 'success', message: '连接已建立' };
+            };
+
+            this.dataChannel.onclose = () => {
+              this.log('数据通道已关闭');
+            };
+
+            this.dataChannel.onmessage = (event) => {
+              this.handleDataChannelMessage(event);
+            };
+          };
+
+          // 缓存 candidate 直到设置 remote description
+          const pendingCandidates = [];
+
+          // 开始监听 SSE（key = session_id）
+          this.eventSource = new EventSource(`/api/file/listen/${this.listenSessionId}`);
+
+          this.eventSource.onmessage = async (event) => {
+            const payload = JSON.parse(event.data);
+            const sender = payload?.data?.sender;
+            const sendType = sender?.sendType;
+            this.log('收到消息: ' + sendType);
+
+            try {
+              // offer/answer/candidate 的 data 都是 JSON 字符串
+              const msgData = sender?.data ? JSON.parse(sender.data) : null;
+
+              if (sendType === 'offer') {
+                // 避免重复 offer 导致 "Called in wrong state: stable"（你日志里已经出现了）
+                if (this.peerConnection.signalingState !== 'stable' || this.peerConnection.remoteDescription) {
+                  this.log('忽略重复/无效 offer（signalingState=' + this.peerConnection.signalingState + '）');
+                  return;
+                }
+
+                // 记录对端信息：Dart 里 answer/candidate 需要 sendDid(对端device) + userId(对端user)
+                remote.userId = sender?.sendUserId || '';
+                remote.deviceId = sender?.sendDeviceId || '';
+                this.log(`对端信息: userId=${remote.userId}, deviceId=${remote.deviceId}`);
+
+                // 收到 offer，创建 answer 并通过 /api/file/answer 回传
+                this.log('处理offer');
+                await this.peerConnection.setRemoteDescription(new RTCSessionDescription(msgData));
+
+                const answer = await this.peerConnection.createAnswer();
+                await this.peerConnection.setLocalDescription(answer);
+                this.log('已创建answer');
+
+                // 把 answer 发回去（缺这个就永远连不上）
+                const description = JSON.stringify({
+                  sdp: answer.sdp,
+                  type: answer.type
+                });
+
+                await fetch('/api/file/answer', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    deviceId: remote.deviceId,
+                    description,
+                    userId: remote.userId,
+                    sessionId: this.listenSessionId
+                  })
+                });
+                this.log('已发送answer');
+
+                // 处理缓存的 candidates
+                this.log('处理缓存的candidates: ' + pendingCandidates.length);
+                for (const candidate of pendingCandidates) {
+                  await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                }
+                pendingCandidates.length = 0;
+              } else if (sendType === 'answer') {
+                // 主动发起方才会走到这里
+                this.log('处理answer');
+                await this.peerConnection.setRemoteDescription(new RTCSessionDescription(msgData));
+              } else if (sendType === 'candidate') {
+                // 收到 candidate
+                if (msgData?.candidate) {
+                  if (this.peerConnection.remoteDescription) {
+                    this.log('添加ICE candidate');
+                    await this.peerConnection.addIceCandidate(new RTCIceCandidate(msgData.candidate));
+                  } else {
+                    this.log('缓存ICE candidate');
+                    pendingCandidates.push(msgData.candidate);
+                  }
+                }
+              }
+            } catch (error) {
+              this.log('处理消息失败: ' + error.message);
+            }
+          };
+
+          this.eventSource.onerror = () => {
+            this.log('SSE连接错误');
+            this.stopListening();
+          };
+        },
+        stopListening() {
+          if (this.eventSource) {
+            this.eventSource.close();
+            this.eventSource = null;
+          }
+          this.listening = false;
+          this.log('停止监听');
+        },
+        closeConnection() {
+          if (this.readyRetryTimer) {
+            clearInterval(this.readyRetryTimer);
+            this.readyRetryTimer = null;
+          }
+          if (this.forceStartTimer) {
+            clearTimeout(this.forceStartTimer);
+            this.forceStartTimer = null;
+          }
+          this.waitingReady = false;
+          this.sendingBinary = false;
+
+          if (this.dataChannel) {
+            this.dataChannel.close();
+            this.dataChannel = null;
+          }
+          if (this.peerConnection) {
+            this.peerConnection.close();
+            this.peerConnection = null;
+          }
+          this.stopListening();
+          this.rtcStatus = null;
+          this.log('连接已关闭');
+        },
+        async sendSelectedFile() {
+          if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            this.log('数据通道未打开，无法传输');
+            return;
+          }
+          if (!this.selectedFile) {
+            this.log('未选择文件');
+            return;
+          }
+          if (this.sendingBinary) return;
+
+          // 对齐 Dart：先发 START-uuid-filename，等对端回 READY 再开始推二进制
+          const uuid = this.fileUuid || this.generateUUID();
+          this.fileUuid = uuid;
+
+          this.waitingReady = true;
+          this.sendingBinary = true;
+          this.sendProgress = 0;
+
+          // 可能存在 READY 丢包/对端还没挂好 onmessage 的情况：做一个轻量重试
+          this.readyRetryCount = 0;
+          if (this.readyRetryTimer) {
+            clearInterval(this.readyRetryTimer);
+            this.readyRetryTimer = null;
+          }
+
+          // Dart 端用 '-' 分割并直接取第3段当文件名；如果文件名里有 '-' 会被截断。
+          // 这里做一次兼容处理：把文件名里的 '-' 替换为 '_'。
+          const safeName = String(this.selectedFile.name).replace(/-/g, '_');
+
+          const sendStartOnce = () => {
+            try {
+              // 同时发送 legacy + JSON 两种 START，兼容不同端（Flutter 只会识别 legacy；Web 端可识别 JSON）
+              this.dataChannel.send(`START-${uuid}-${safeName}`);
+              this.dataChannel.send(
+                JSON.stringify({
+                  type: 'START',
+                  uuid,
+                  name: safeName,
+                  size: this.selectedFile.size
+                })
+              );
+              this.log(`已发送 START(legacy+json) #${this.readyRetryCount + 1}，等待对端 READY...`);
+            } catch (e) {
+              this.log('发送 START 失败: ' + e.message);
+            }
+          };
+
+          sendStartOnce();
+
+          // 兼容某些对端：可能不会回 READY（或 READY 丢包）。
+          // 为了让“对方接受后立刻跑进度条”的体验成立，这里在短延迟后强制开始推二进制。
+          if (this.forceStartTimer) {
+            clearTimeout(this.forceStartTimer);
+            this.forceStartTimer = null;
+          }
+          this.forceStartTimer = setTimeout(async () => {
+            if (!this.waitingReady) return;
+            this.log('未收到 READY，强制开始发送二进制（兼容模式）');
+            this.waitingReady = false;
+            if (this.readyRetryTimer) {
+              clearInterval(this.readyRetryTimer);
+              this.readyRetryTimer = null;
+            }
+            await this.pumpFileChunks();
+          }, 1500);
+
+          this.readyRetryTimer = setInterval(() => {
+            if (!this.waitingReady) {
+              clearInterval(this.readyRetryTimer);
+              this.readyRetryTimer = null;
+              return;
+            }
+
+            this.readyRetryCount += 1;
+            if (this.readyRetryCount >= 10) {
+              clearInterval(this.readyRetryTimer);
+              this.readyRetryTimer = null;
+              this.log('等待 READY 超时（已重试10次），请确认对端是否真的进入接收状态');
+              // 保持 sendingBinary=true，让 UI 不会误以为已完成
+              return;
+            }
+
+            sendStartOnce();
+          }, 500);
+        },
+
+        // 处理 DataChannel 收到的数据（文本控制 / 二进制块）
+        async handleDataChannelMessage(event) {
+          try {
+            if (typeof event.data === 'string') {
+              const text = event.data;
+
+              // 兼容 Dart/Flutter 的 legacy 文本协议
+              // - START-<uuid>-<filename>
+              // - READY
+              // - EOF
+              // - CANCEL
+              if (text.startsWith('READY')) {
+                this.log('收到 READY(legacy)，开始发送文件二进制');
+                this.waitingReady = false;
+                if (this.readyRetryTimer) {
+                  clearInterval(this.readyRetryTimer);
+                  this.readyRetryTimer = null;
+                }
+                if (this.forceStartTimer) {
+                  clearTimeout(this.forceStartTimer);
+                  this.forceStartTimer = null;
+                }
+                await this.pumpFileChunks();
+                return;
+              }
+
+              if (text.startsWith('START-')) {
+                // 由于文件名可能包含 '-'，这里把前两段拿掉，其余拼回去
+                const parts = text.split('-');
+                const uuid = parts[1] || '';
+                const name = parts.slice(2).join('-') || 'received.bin';
+
+                this.receiving = true;
+                this.receiveFileName = name;
+                this.receiveFileSize = 0; // legacy 不带 size
+                this.receiveBytes = 0;
+                this.receiveBuffers = [];
+                this.receiveProgress = 0;
+
+                this.log(`收到 START(legacy): uuid=${uuid}, name=${name}`);
+
+                // 回复 READY（legacy）
+                this.dataChannel?.send('READY');
+                this.log('已回复 READY(legacy)');
+                return;
+              }
+
+              if (text.startsWith('EOF')) {
+                this.log('收到 EOF(legacy)，组装文件并触发下载');
+                const blob = new Blob(this.receiveBuffers, { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = this.receiveFileName || 'received.bin';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+
+                this.receiving = false;
+                this.log('接收完成');
+                return;
+              }
+
+              if (text.startsWith('CANCEL')) {
+                this.log('收到 CANCEL(legacy)，对方取消');
+                this.receiving = false;
+                this.receiveBuffers = [];
+                return;
+              }
+
+              // 兼容 Web/Web 的 JSON 协议
+              if (text.startsWith('{')) {
+                const msg = JSON.parse(text);
+
+                if (msg.type === 'READY') {
+                  this.log('收到 READY(JSON)，开始发送文件二进制');
+                  this.waitingReady = false;
+                  await this.pumpFileChunks();
+                  return;
+                }
+
+                if (msg.type === 'START') {
+                  this.receiving = true;
+                  this.receiveFileName = msg.name || 'received.bin';
+                  this.receiveFileSize = Number(msg.size || 0);
+                  this.receiveBytes = 0;
+                  this.receiveBuffers = [];
+                  this.receiveProgress = 0;
+                  this.log(`收到 START(JSON): ${this.receiveFileName} (${this.receiveFileSize} bytes)`);
+
+                  this.dataChannel?.send(JSON.stringify({ type: 'READY' }));
+                  this.log('已回复 READY(JSON)');
+                  return;
+                }
+
+                if (msg.type === 'EOF') {
+                  this.log('收到 EOF(JSON)，组装文件并触发下载');
+                  const blob = new Blob(this.receiveBuffers, { type: 'application/octet-stream' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = this.receiveFileName || 'received.bin';
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  URL.revokeObjectURL(url);
+
+                  this.receiving = false;
+                  this.log('接收完成');
+                  return;
+                }
+
+                if (msg.type === 'CANCEL') {
+                  this.log('收到 CANCEL(JSON)，对方取消');
+                  this.receiving = false;
+                  this.receiveBuffers = [];
+                  return;
+                }
+              }
+
+              this.log('收到文本: ' + text);
+              return;
+            }
+
+            // 二进制块
+            const buf = event.data;
+            if (buf instanceof ArrayBuffer) {
+              if (!this.receiving) {
+                this.log('收到二进制块: ' + buf.byteLength + ' bytes');
+                return;
+              }
+              this.receiveBuffers.push(buf);
+              this.receiveBytes += buf.byteLength;
+              if (this.receiveFileSize > 0) {
+                this.receiveProgress = Math.min(1, this.receiveBytes / this.receiveFileSize);
+              }
+              return;
+            }
+
+            this.log('收到未知类型的数据');
+          } catch (e) {
+            this.log('handleDataChannelMessage错误: ' + e.message);
+          }
+        },
+
+        // 实际发送文件数据（分块 + 简单背压）
+        async pumpFileChunks() {
+          const dc = this.dataChannel;
+          if (!dc || dc.readyState !== 'open') {
+            this.log('数据通道未打开，无法发送');
+            this.sendingBinary = false;
+            return;
+          }
+          if (!this.selectedFile) {
+            this.log('未选择文件');
+            this.sendingBinary = false;
+            return;
+          }
+
+          const file = this.selectedFile;
+          const chunkSize = 64 * 1024; // 64KB
+          let offset = 0;
+
+          // 简单背压阈值
+          const maxBuffered = 8 * 1024 * 1024; // 8MB
+
+          try {
+            while (offset < file.size) {
+              while (dc.bufferedAmount > maxBuffered) {
+                await new Promise((r) => setTimeout(r, 50));
+              }
+
+              const slice = file.slice(offset, offset + chunkSize);
+              const ab = await slice.arrayBuffer();
+              dc.send(ab);
+              offset += ab.byteLength;
+              this.sendProgress = Math.min(1, offset / file.size);
+            }
+
+            // 对齐 Dart：EOF 走纯文本
+            dc.send('EOF');
+            this.sendProgress = 1;
+            this.log('已发送 EOF');
+          } finally {
+            // 发送完成后必须清理状态，否则下一次发送会卡在“任务无法结束/一直占用连接”
+            this.sendingBinary = false;
+            this.waitingReady = false;
+
+            if (this.readyRetryTimer) {
+              clearInterval(this.readyRetryTimer);
+              this.readyRetryTimer = null;
+            }
+            if (this.forceStartTimer) {
+              clearTimeout(this.forceStartTimer);
+              this.forceStartTimer = null;
+            }
+
+            // 给一点时间让 EOF 发出去，再自动断开并恢复 autoAccept
+            setTimeout(() => {
+              try {
+                this.closeConnection();
+              } catch (e) {}
+              this.autoAccept = true;
+            }, 300);
+          }
+        },
+
+        generateUUID() {
+          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+        },
+        async refreshPending() {
+          try {
+            const response = await fetch('/api/file/pending-sessions');
+            const result = await response.json();
+            this.pendingSessions = result.sessions;
+            this.log('待处理连接: ' + this.pendingSessions.length);
+          } catch (error) {
+            this.log('获取待处理连接失败: ' + error.message);
+          }
+        },
+        startAutoAccept() {
+          this.log('启动自动接受模式');
+          setInterval(async () => {
+            if (this.autoAccept && !this.listening && !this.peerConnection) {
+              await this.refreshPending();
+              if (this.pendingSessions.length > 0) {
+                const session = this.pendingSessions[0];
+                this.log('自动接受连接: ' + session.sessionId);
+                this.listenSessionId = session.sessionId;
+                this.startListening();
+              }
+            }
+          }, 2000);
+        }
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

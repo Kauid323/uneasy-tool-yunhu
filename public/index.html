@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>云湖会话列表</title>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.0.0/dist/livekit-client.umd.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 20px;
+      font-size: 28px;
+    }
+
+    .stats {
+      background: white;
+      padding: 15px 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .stats-item {
+      display: inline-block;
+      margin-right: 30px;
+      color: #666;
+    }
+
+    .stats-value {
+      font-size: 24px;
+      font-weight: bold;
+      color: #1890ff;
+      margin-right: 5px;
+    }
+
+    .conversation-list {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+
+    .conversation-item {
+      display: flex;
+      align-items: center;
+      padding: 15px 20px;
+      border-bottom: 1px solid #f0f0f0;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .conversation-item:hover {
+      background: #fafafa;
+    }
+
+    .conversation-item:last-child {
+      border-bottom: none;
+    }
+
+    .avatar {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      margin-right: 15px;
+      object-fit: cover;
+      background: #e0e0e0;
+    }
+
+    .conversation-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .conversation-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+
+    .conversation-name {
+      font-size: 16px;
+      font-weight: 500;
+      color: #333;
+      margin-right: 10px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      color: white;
+      margin-right: 5px;
+    }
+
+    .badge-user {
+      background: #52c41a;
+    }
+
+    .badge-group {
+      background: #1890ff;
+    }
+
+    .badge-bot {
+      background: #722ed1;
+    }
+
+    .badge-official {
+      background: #fa8c16;
+    }
+
+    .badge-unread {
+      background: #f5222d;
+    }
+
+    .badge-at {
+      background: #ff4d4f;
+    }
+
+    .badge-dnd {
+      background: #8c8c8c;
+    }
+
+    .conversation-content {
+      font-size: 14px;
+      color: #999;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conversation-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      margin-left: 15px;
+    }
+
+    .conversation-time {
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 5px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #999;
+    }
+
+    .error {
+      background: #fff2f0;
+      border: 1px solid #ffccc7;
+      color: #cf1322;
+      padding: 15px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+
+    .refresh-btn {
+      background: #1890ff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+
+    .refresh-btn:hover {
+      background: #40a9ff;
+    }
+
+    .refresh-btn:active {
+      background: #096dd9;
+    }
+
+    .refresh-btn:disabled {
+      background: #d9d9d9;
+      cursor: not-allowed;
+    }
+
+    /* 语音面板样式 */
+    .voice-panel {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: white;
+      box-shadow: 0 -2px 8px rgba(0,0,0,0.15);
+      padding: 20px;
+      transform: translateY(100%);
+      transition: transform 0.3s;
+      z-index: 1000;
+    }
+
+    .voice-panel.active {
+      transform: translateY(0);
+    }
+
+    .voice-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+
+    .voice-title {
+      font-size: 18px;
+      font-weight: 500;
+    }
+
+    .voice-controls {
+      display: flex;
+      gap: 10px;
+    }
+
+    .voice-btn {
+      background: #1890ff;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .voice-btn:hover {
+      background: #40a9ff;
+    }
+
+    .voice-btn.danger {
+      background: #ff4d4f;
+    }
+
+    .voice-btn.danger:hover {
+      background: #ff7875;
+    }
+
+    .participants {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 15px;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+
+    .participant {
+      background: #f5f5f5;
+      padding: 10px;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+    }
+
+    .participant.speaking {
+      background: #e6f7ff;
+      border: 2px solid #91d5ff;
+    }
+
+    .participant-video {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .participant-video video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .participant-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .audio-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #52c41a;
+    }
+
+    .audio-indicator.muted {
+      background: #ff4d4f;
+    }
+
+    .voice-icon {
+      width: 20px;
+      height: 20px;
+      margin-left: auto;
+      cursor: pointer;
+      color: #1890ff;
+    }
+
+    .voice-icon:hover {
+      color: #40a9ff;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="container">
+      <h1>云湖会话列表</h1>
+      
+      <button class="refresh-btn" @click="loadConversations" :disabled="loading">
+        {{ loading ? '加载中...' : '刷新列表' }}
+      </button>
+      
+      <div v-if="error" class="error">{{ error }}</div>
+      
+      <div v-if="!loading && conversations.length > 0" class="stats">
+        <span class="stats-item">
+          <span class="stats-value">{{ total }}</span>
+          <span>个会话</span>
+        </span>
+        <span class="stats-item">
+          <span class="stats-value">{{ unreadCount }}</span>
+          <span>未读</span>
+        </span>
+      </div>
+      
+      <div v-if="loading" class="loading">加载中...</div>
+      
+      <div v-if="!loading && conversations.length > 0" class="conversation-list">
+        <div 
+          v-for="conv in conversations" 
+          :key="conv.chatId" 
+          class="conversation-item"
+        >
+          <img 
+            class="avatar" 
+            :src="conv.avatarUrl || 'https://via.placeholder.com/50'" 
+            :alt="conv.name"
+          >
+          <div class="conversation-info">
+            <div class="conversation-header">
+              <span class="conversation-name">{{ conv.name || '未知' }}</span>
+              <span v-if="conv.chatType === 1" class="badge badge-user">用户</span>
+              <span v-if="conv.chatType === 2" class="badge badge-group">群聊</span>
+              <span v-if="conv.chatType === 3" class="badge badge-bot">机器人</span>
+              <span v-if="conv.certificationLevel === 1" class="badge badge-official">官方</span>
+              <span v-if="conv.certificationLevel === 2" class="badge badge-official">地区</span>
+              <span v-if="conv.unreadMessage" class="badge badge-unread">未读</span>
+              <span v-if="conv.at" class="badge badge-at">@我</span>
+              <span v-if="conv.doNotDisturb" class="badge badge-dnd">免打扰</span>
+            </div>
+            <div class="conversation-content">{{ conv.chatContent || '暂无消息' }}</div>
+          </div>
+          <div class="conversation-meta">
+            <div class="conversation-time">{{ formatTime(conv.timestamp) }}</div>
+            <svg 
+              v-if="conv.chatType === 2" 
+              class="voice-icon" 
+              @click.stop="openVoicePanel(conv)"
+              viewBox="0 0 1024 1024"
+              fill="currentColor"
+            >
+              <path d="M512 128c-70.7 0-128 57.3-128 128v256c0 70.7 57.3 128 128 128s128-57.3 128-128V256c0-70.7-57.3-128-128-128z m64 384c0 35.3-28.7 64-64 64s-64-28.7-64-64V256c0-35.3 28.7-64 64-64s64 28.7 64 64v256z m256-128c0 17.7-14.3 32-32 32s-32-14.3-32-32c0-106-86-192-192-192s-192 86-192 192c0 17.7-14.3 32-32 32s-32-14.3-32-32c0-136.8 107.4-248.6 243.2-255.5V96c0-17.7 14.3-32 32-32s32 14.3 32 32v32.5C771.6 135.4 879 247.2 879 384z m-335 384v-89.6c-137.8-6.9-243.2-118.7-243.2-255.5 0-17.7 14.3-32 32-32s32 14.3 32 32c0 106 86 192 192 192s192-86 192-192c0-17.7 14.3-32 32-32s32 14.3 32 32c0 136.8-107.4 248.6-243.2 255.5V768h128c17.7 0 32 14.3 32 32s-14.3 32-32 32H416c-17.7 0-32-14.3-32-32s14.3-32 32-32h128z"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 语音面板 -->
+    <div class="voice-panel" :class="{ active: voicePanel.show }">
+      <div class="voice-header">
+        <div class="voice-title">{{ voicePanel.title }}</div>
+        <div class="voice-controls">
+          <button 
+            v-if="!voicePanel.connected" 
+            class="voice-btn" 
+            @click="joinVoice"
+            :disabled="voicePanel.loading"
+          >
+            {{ voicePanel.loading ? '连接中...' : '加入语音' }}
+          </button>
+          <button 
+            v-if="voicePanel.connected" 
+            class="voice-btn" 
+            @click="toggleMute"
+          >
+            {{ voicePanel.muted ? '取消静音' : '静音' }}
+          </button>
+          <button 
+            v-if="voicePanel.connected" 
+            class="voice-btn" 
+            @click="toggleVideo"
+          >
+            {{ voicePanel.videoEnabled ? '关闭摄像头' : '开启摄像头' }}
+          </button>
+          <button 
+            v-if="voicePanel.connected" 
+            class="voice-btn danger" 
+            @click="leaveVoice"
+          >
+            离开
+          </button>
+          <button class="voice-btn danger" @click="closeVoicePanel">
+            关闭
+          </button>
+        </div>
+      </div>
+      <div v-if="voicePanel.connected" class="participants">
+        <div 
+          v-for="p in voicePanel.participants" 
+          :key="p.identity"
+          class="participant"
+          :class="{ speaking: p.isSpeaking }"
+        >
+          <div class="participant-video" :id="'video-' + p.identity"></div>
+          <div class="participant-info">
+            <div class="audio-indicator" :class="{ muted: p.isMuted }"></div>
+            <span>{{ p.name }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp } = Vue;
+    const { Room, RoomEvent, Track } = LivekitClient;
+
+    createApp({
+      data() {
+        return {
+          loading: false,
+          error: null,
+          conversations: [],
+          total: 0,
+          voicePanel: {
+            show: false,
+            title: '',
+            chatId: '',
+            roomId: '',
+            connected: false,
+            loading: false,
+            muted: false,
+            videoEnabled: false,
+            participants: []
+          },
+          livekitRoom: null
+        }
+      },
+      computed: {
+        unreadCount() {
+          return this.conversations.filter(c => c.unreadMessage).length;
+        }
+      },
+      methods: {
+        formatTime(timestamp) {
+          const date = new Date(timestamp * 1000);
+          const now = new Date();
+          const diff = now - date;
+          
+          if (diff < 60000) {
+            return '刚刚';
+          } else if (diff < 3600000) {
+            return Math.floor(diff / 60000) + '分钟前';
+          } else if (diff < 86400000) {
+            return Math.floor(diff / 3600000) + '小时前';
+          } else if (diff < 604800000) {
+            return Math.floor(diff / 86400000) + '天前';
+          } else {
+            return date.toLocaleDateString('zh-CN');
+          }
+        },
+        async loadConversations() {
+          this.loading = true;
+          this.error = null;
+          
+          try {
+            const response = await fetch('/api/conversations');
+            const result = await response.json();
+            
+            if (result.error) {
+              throw new Error(result.error);
+            }
+            
+            this.conversations = result.data || [];
+            this.total = result.total || this.conversations.length;
+          } catch (err) {
+            this.error = '加载失败: ' + err.message;
+          } finally {
+            this.loading = false;
+          }
+        },
+        async openVoicePanel(conv) {
+          this.voicePanel.show = true;
+          this.voicePanel.title = conv.name;
+          this.voicePanel.chatId = conv.chatId;
+          this.voicePanel.loading = true;
+          
+          try {
+            // 获取语音房间
+            const response = await fetch('/api/live/rooms', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ groupId: conv.chatId })
+            });
+            
+            const result = await response.json();
+            
+            if (result.code === 1 && result.data.rooms && result.data.rooms.length > 0) {
+              this.voicePanel.roomId = result.data.rooms[0].roomId;
+            }
+          } catch (err) {
+            this.error = '获取语音房间失败: ' + err.message;
+          } finally {
+            this.voicePanel.loading = false;
+          }
+        },
+        async joinVoice() {
+          if (!this.voicePanel.roomId) {
+            this.error = '没有可用的语音房间';
+            return;
+          }
+          
+          this.voicePanel.loading = true;
+          
+          try {
+            // 获取加入token
+            const response = await fetch('/api/live/join', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                roomId: this.voicePanel.roomId,
+                chatId: this.voicePanel.chatId
+              })
+            });
+            
+            const result = await response.json();
+            
+            if (result.code !== 1) {
+              throw new Error(result.msg || '获取token失败');
+            }
+            
+            // 连接LiveKit
+            this.livekitRoom = new Room();
+            
+            this.livekitRoom.on(RoomEvent.Connected, () => {
+              console.log('已连接到房间');
+              this.voicePanel.connected = true;
+              this.updateParticipants();
+              
+              // 检查所有远程参与者的轨道
+              this.livekitRoom.remoteParticipants.forEach((participant) => {
+                console.log('远程参与者:', participant.identity, participant.name);
+                participant.trackPublications.forEach((publication) => {
+                  console.log('  - 轨道:', publication.kind, '已订阅:', publication.isSubscribed, '轨道存在:', !!publication.track);
+                  
+                  // 如果轨道已经存在但未附加，手动附加
+                  if (publication.track && publication.isSubscribed) {
+                    const track = publication.track;
+                    if (track.kind === Track.Kind.Video) {
+                      const videoElement = track.attach();
+                      videoElement.controls = true;
+                      videoElement.autoplay = true;
+                      videoElement.playsInline = true;
+                      videoElement.style.width = '100%';
+                      videoElement.style.height = '100%';
+                      videoElement.style.objectFit = 'contain';
+                      
+                      const container = document.getElementById('video-' + participant.identity);
+                      if (container) {
+                        container.innerHTML = '';
+                        container.appendChild(videoElement);
+                        console.log('手动附加视频轨道到:', participant.identity);
+                        videoElement.play().catch(e => console.error('播放失败:', e));
+                      }
+                    } else if (track.kind === Track.Kind.Audio) {
+                      const audioElement = track.attach();
+                      audioElement.autoplay = true;
+                      document.body.appendChild(audioElement);
+                      console.log('手动附加音频轨道');
+                    }
+                  }
+                });
+              });
+            });
+            
+            this.livekitRoom.on(RoomEvent.Disconnected, () => {
+              this.voicePanel.connected = false;
+              this.voicePanel.participants = [];
+            });
+            
+            this.livekitRoom.on(RoomEvent.ParticipantConnected, (participant) => {
+              console.log('参与者连接:', participant.identity, participant.name);
+              this.updateParticipants();
+              
+              // 订阅所有现有轨道
+              participant.trackPublications.forEach((publication) => {
+                if (publication.track) {
+                  console.log('发现已发布的轨道:', publication.kind);
+                }
+              });
+            });
+            
+            this.livekitRoom.on(RoomEvent.TrackPublished, (publication, participant) => {
+              console.log('轨道已发布:', publication.kind, '来自:', participant.identity);
+              this.updateParticipants();
+            });
+            
+            this.livekitRoom.on(RoomEvent.ParticipantDisconnected, () => {
+              this.updateParticipants();
+            });
+            
+            this.livekitRoom.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+              console.log('订阅到轨道:', track.kind, '来自:', participant.identity);
+              
+              if (track.kind === Track.Kind.Audio) {
+                const audioElement = track.attach();
+                audioElement.autoplay = true;
+                document.body.appendChild(audioElement);
+                console.log('音频轨道已附加');
+              } else if (track.kind === Track.Kind.Video) {
+                const videoElement = track.attach();
+                videoElement.controls = true;
+                videoElement.autoplay = true;
+                videoElement.playsInline = true;
+                videoElement.style.width = '100%';
+                videoElement.style.height = '100%';
+                videoElement.style.objectFit = 'contain';
+                
+                const container = document.getElementById('video-' + participant.identity);
+                if (container) {
+                  container.innerHTML = '';
+                  container.appendChild(videoElement);
+                  console.log('视频轨道已附加到容器:', participant.identity);
+                  
+                  // 确保视频播放
+                  videoElement.play().catch(e => {
+                    console.error('视频播放失败:', e);
+                  });
+                } else {
+                  console.warn('找不到视频容器:', 'video-' + participant.identity);
+                }
+              }
+              this.updateParticipants();
+            });
+            
+            this.livekitRoom.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+              track.detach();
+              this.updateParticipants();
+            });
+            
+            this.livekitRoom.on(RoomEvent.LocalTrackPublished, () => {
+              this.updateParticipants();
+            });
+            
+            // 直接使用服务器URL和token，让LiveKit SDK自己处理参数
+            const wsUrl = 'wss://livekit.jwznb.com';
+            
+            await this.livekitRoom.connect(wsUrl, result.data.joinToken);
+            
+            // 连接成功后，自动开启麦克风
+            await this.livekitRoom.localParticipant.setMicrophoneEnabled(true);
+            
+            // 显示本地音频轨道
+            const localAudioTrack = this.livekitRoom.localParticipant.getTrackPublication(Track.Source.Microphone);
+            if (localAudioTrack && localAudioTrack.track) {
+              console.log('本地音频轨道已启用');
+            }
+            
+          } catch (err) {
+            this.error = '加入语音失败: ' + err.message;
+          } finally {
+            this.voicePanel.loading = false;
+          }
+        },
+        async toggleMute() {
+          if (!this.livekitRoom) return;
+          
+          const localParticipant = this.livekitRoom.localParticipant;
+          const audioTrack = localParticipant.getTrackPublication(Track.Source.Microphone);
+          
+          if (audioTrack) {
+            this.voicePanel.muted = !audioTrack.isMuted;
+            await audioTrack.setMuted(this.voicePanel.muted);
+            this.updateParticipants();
+          }
+        },
+        async toggleVideo() {
+          if (!this.livekitRoom) return;
+          
+          const localParticipant = this.livekitRoom.localParticipant;
+          
+          if (this.voicePanel.videoEnabled) {
+            // 关闭摄像头
+            await localParticipant.setCameraEnabled(false);
+            this.voicePanel.videoEnabled = false;
+          } else {
+            // 开启摄像头
+            await localParticipant.setCameraEnabled(true);
+            this.voicePanel.videoEnabled = true;
+            
+            // 显示本地视频
+            const videoTrack = localParticipant.getTrackPublication(Track.Source.Camera);
+            if (videoTrack && videoTrack.track) {
+              const videoElement = videoTrack.track.attach();
+              videoElement.controls = true;
+              const container = document.getElementById('video-' + localParticipant.identity);
+              if (container) {
+                container.innerHTML = '';
+                container.appendChild(videoElement);
+              }
+            }
+          }
+          
+          this.updateParticipants();
+        },
+        async leaveVoice() {
+          if (this.livekitRoom) {
+            await this.livekitRoom.disconnect();
+            this.livekitRoom = null;
+          }
+          this.voicePanel.connected = false;
+          this.voicePanel.participants = [];
+        },
+        closeVoicePanel() {
+          this.leaveVoice();
+          this.voicePanel.show = false;
+          this.voicePanel.roomId = '';
+        },
+        updateParticipants() {
+          if (!this.livekitRoom) return;
+          
+          this.voicePanel.participants = Array.from(this.livekitRoom.remoteParticipants.values()).map(p => ({
+            identity: p.identity,
+            name: p.name || p.identity,
+            isSpeaking: p.isSpeaking,
+            isMuted: !p.isMicrophoneEnabled
+          }));
+          
+          const local = this.livekitRoom.localParticipant;
+          this.voicePanel.participants.unshift({
+            identity: local.identity,
+            name: (local.name || local.identity) + ' (我)',
+            isSpeaking: local.isSpeaking,
+            isMuted: this.voicePanel.muted
+          });
+          
+          // 等待DOM更新后，为所有参与者附加视频
+          this.$nextTick(() => {
+            this.livekitRoom.remoteParticipants.forEach((participant) => {
+              participant.trackPublications.forEach((publication) => {
+                if (publication.track && publication.kind === Track.Kind.Video) {
+                  const container = document.getElementById('video-' + participant.identity);
+                  if (container && container.children.length === 0) {
+                    const videoElement = publication.track.attach();
+                    videoElement.controls = true;
+                    videoElement.autoplay = true;
+                    videoElement.playsInline = true;
+                    videoElement.style.width = '100%';
+                    videoElement.style.height = '100%';
+                    videoElement.style.objectFit = 'contain';
+                    container.appendChild(videoElement);
+                    console.log('更新时附加视频:', participant.identity);
+                    videoElement.play().catch(e => console.error('播放失败:', e));
+                  }
+                }
+              });
+            });
+          });
+        }
+      },
+      mounted() {
+        this.loadConversations();
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
