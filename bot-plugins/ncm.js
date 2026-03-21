@@ -33,7 +33,6 @@
 
   function resolveTmpDir() {
     if (process.platform === 'win32') {
-      // 鐢ㄦ埛绾﹀畾锛歐indows 鐢?repo 鍐呯殑 tmp 鐩綍浠ｆ浛 /tmp
       return path.resolve(process.cwd(), 'tmp');
     }
     return '/tmp';
@@ -113,7 +112,6 @@
       await downloadToFile(audioUrl, srcPath, { referer: 'http://myapp.jwznb.com' });
 
       const dur = Math.max(1, Math.min(15, Number(durationSec) || 3));
-      // 璇嗘洸 demo 瑕佹眰 8KHz float32 PCM锛坢ono锛夛紝骞朵笖鍙彇 duration 绉掋€?
       await runFfmpeg([
         '-hide_banner',
         '-loglevel',
@@ -245,7 +243,6 @@
     if (!text) return null;
     const s = String(text);
 
-    // 鍒嗕韩鍔ㄦ€侊細http(s)://music.163.com/event?id=xxx&uid=yyy
     const share = s.match(/https?:\/\/music\.163\.com\/(?:#\/)?event\?(?:[^\s#&]*&)*id=(\d+)(?:[^\s#&]*&)*uid=(\d+)/i)
       || s.match(/https?:\/\/music\.163\.com\/(?:#\/)?event\?(?:[^\s#&]*&)*id=(\d+)/i);
     if (share) {
